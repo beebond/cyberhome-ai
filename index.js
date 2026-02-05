@@ -40,45 +40,85 @@ app.post('/chatwoot-webhook', async (req, res) => {
     
     const event = req.body;
     
+    // 验证请求结构
+    if (!event || !event.event) {
+      console.log('Invalid webhook structure:', event);
+      return res.status(400).json({ 
+        status: 'error', 
+        error: 'Invalid webhook structure' 
+      });
+    }
+    
     // 验证是消息事件
     if (event.event !== 'message_created' && event.event !== 'message_updated') {
-      return res.status(200).json({ status: 'ignored', reason: 'Not a message event' });
+      console.log('Ignoring non-message event:', event.event);
+      return res.status(200).json({ 
+        status: 'ignored', 
+        reason: 'Not a message event' 
+      });
+    }
+
+    // 验证消息对象存在
+    if (!event.message) {
+      console.log('No message in event:', event);
+      return res.status(200).json({ 
+        status: 'ignored', 
+        reason: 'No message in event' 
+      });
     }
 
     const message = event.message;
     
     // 只处理用户发送的消息，忽略AI发送的消息
     if (message.message_type !== 'incoming') {
-      return res.status(200).json({ status: 'ignored', reason: 'Not an incoming message' });
+      console.log('Ignoring non-incoming message:', message.message_type);
+      return res.status(200).json({ 
+        status: 'ignored', 
+        reason: 'Not an incoming message' 
+      });
     }
 
     // 获取对话上下文
     const conversationId = message.conversation_id;
-    const contactId = message.sender.id;
+    const content = message.content || '';
     
+    if (!content.trim()) {
+      console.log('Empty message content');
+      return res.status(200).json({ 
+        status: 'ignored', 
+        reason: 'Empty message' 
+      });
+    }
+    
+    console.log('Processing message:', {
+      conversationId,
+      content: content.substring(0, 100) + '...',
+      sender: message.sender?.id
+    });
+
     // 调用OpenAI生成回复
-    const aiResponse = await generateAIResponse(message.content, conversationId);
+    const aiResponse = await generateAIResponse(content, conversationId);
+    
+    console.log('AI Response generated:', aiResponse.substring(0, 100) + '...');
     
     // 发送回复到Chatwoot
     await sendMessageToChatwoot(conversationId, aiResponse);
     
-    res.json({ status: 'success', message: 'AI response sent' });
+    res.json({ 
+      status: 'success', 
+      message: 'AI response sent',
+      response_preview: aiResponse.substring(0, 100) + '...'
+    });
     
   } catch (error) {
     console.error('Webhook error:', error);
+    console.error('Error stack:', error.stack);
     res.status(500).json({ 
       status: 'error', 
-      error: error.message 
+      error: error.message,
+      details: process.env.NODE_ENV === 'development' ? error.stack : undefined
     });
   }
-});
-
-// 备用webhook端点（兼容Chatwoot默认配置）
-app.post('/', async (req, res) => {
-  console.log('Received webhook at root endpoint');
-  // 重定向到chatwoot-webhook处理
-  req.url = '/chatwoot-webhook';
-  app.handle(req, res);
 });
 
 // OpenAI生成回复函数
@@ -120,8 +160,17 @@ async function generateAIResponse(userMessage, conversationId) {
 // 发送消息到Chatwoot
 async function sendMessageToChatwoot(conversationId, content) {
   try {
+    console.log('Sending message to Chatwoot:', {
+      baseUrl: CHATWOOT_BASE_URL,
+      accountId: CHATWOOT_ACCOUNT_ID,
+      conversationId: conversationId
+    });
+
+    const url = `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`;
+    console.log('API URL:', url);
+
     const response = await axios.post(
-      `${CHATWOOT_BASE_URL}/api/v1/accounts/${CHATWOOT_ACCOUNT_ID}/conversations/${conversationId}/messages`,
+      url,
       {
         content: content,
         message_type: 'outgoing',
@@ -134,12 +183,19 @@ async function sendMessageToChatwoot(conversationId, content) {
         }
       }
     );
-    
-    console.log('Message sent to Chatwoot:', response.data);
+
+    console.log('Message sent to Chatwoot successfully:', response.data);
     return response.data;
-    
+
   } catch (error) {
-    console.error('Chatwoot API error:', error.response?.data || error.message);
+    console.error('Chatwoot API error details:');
+    console.error('URL:', error.config?.url);
+    console.error('Method:', error.config?.method);
+    console.error('Status:', error.response?.status);
+    console.error('Status Text:', error.response?.statusText);
+    console.error('Response Data:', error.response?.data);
+    console.error('Full Error:', error.message);
+    
     throw error;
   }
 }
@@ -148,4 +204,9 @@ async function sendMessageToChatwoot(conversationId, content) {
 app.listen(port, '0.0.0.0', () => {
   console.log(`AI Assistant server running on port ${port}`);
   console.log(`Webhook endpoint: http://0.0.0.0:${port}/chatwoot-webhook`);
+  console.log('Environment variables loaded:');
+  console.log('- CHATWOOT_BASE_URL:', CHATWOOT_BASE_URL ? 'Set' : 'Missing');
+  console.log('- CHATWOOT_ACCOUNT_ID:', CHATWOOT_ACCOUNT_ID ? 'Set' : 'Missing');
+  console.log('- CHATWOOT_API_TOKEN:', CHATWOOT_API_TOKEN ? 'Set' : 'Missing');
+  console.log('- OPENAI_API_KEY:', OPENAI_API_KEY ? 'Set' : 'Missing');
 });
