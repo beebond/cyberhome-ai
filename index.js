@@ -58,16 +58,8 @@ app.post('/chatwoot-webhook', async (req, res) => {
       });
     }
 
-    // 验证消息对象存在
-    if (!event.message) {
-      console.log('No message in event:', event);
-      return res.status(200).json({ 
-        status: 'ignored', 
-        reason: 'No message in event' 
-      });
-    }
-
-    const message = event.message;
+    // Chatwoot直接发送消息对象，而不是嵌套在message字段中
+    const message = event;
     
     // 只处理用户发送的消息，忽略AI发送的消息
     if (message.message_type !== 'incoming') {
@@ -79,11 +71,14 @@ app.post('/chatwoot-webhook', async (req, res) => {
     }
 
     // 获取对话上下文
-    const conversationId = message.conversation_id;
+    const conversationId = message.conversation?.id || message.conversation_id;
     const content = message.content || '';
     
-    if (!content.trim()) {
-      console.log('Empty message content');
+    // 清理HTML标签（Chatwoot发送的内容包含HTML）
+    const cleanContent = content.replace(/<[^>]*>/g, '').trim();
+    
+    if (!cleanContent) {
+      console.log('Empty message content after cleaning');
       return res.status(200).json({ 
         status: 'ignored', 
         reason: 'Empty message' 
@@ -92,12 +87,12 @@ app.post('/chatwoot-webhook', async (req, res) => {
     
     console.log('Processing message:', {
       conversationId,
-      content: content.substring(0, 100) + '...',
+      content: cleanContent.substring(0, 100) + '...',
       sender: message.sender?.id
     });
 
     // 调用OpenAI生成回复
-    const aiResponse = await generateAIResponse(content, conversationId);
+    const aiResponse = await generateAIResponse(cleanContent, conversationId);
     
     console.log('AI Response generated:', aiResponse.substring(0, 100) + '...');
     
@@ -131,7 +126,7 @@ async function generateAIResponse(userMessage, conversationId) {
         messages: [
           {
             role: 'system',
-            content: 'You are a helpful customer support assistant for an e-commerce store. Be friendly, professional, and helpful. Answer questions about products, orders, shipping, and returns.'
+            content: 'You are a helpful customer support assistant for an e-commerce store called CyberHome. Be friendly, professional, and helpful. Answer questions about products, orders, shipping, and returns. Keep responses concise and helpful.'
           },
           {
             role: 'user',
